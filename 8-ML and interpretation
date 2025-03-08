@@ -1,0 +1,543 @@
+rm(list=ls())
+data = read.csv("ml_data.csv")
+data$HL = as.factor(data$HL)
+
+###SMOTE
+library(smotefamily)
+smote_result<- SMOTE(X = data[, -21], target = data$HL, K = 5, dup_size = 0)
+balanced_data <- data.frame(smote_result$data)
+colnames(balanced_data)[21] <- "HL"
+names(balanced_data)
+balanced_data$gender <- round(balanced_data$gender)
+balanced_data$race <- round(balanced_data$race)
+balanced_data$hypertention <- round(balanced_data$hypertention)
+balanced_data$Noise_exposure <- round(balanced_data$Noise_exposure)
+balanced_data$Diabetes <- round(balanced_data$Diabetes)
+
+
+library(dplyr)
+varsToFactor <- c("gender","race","hypertention",
+                  "Noise_exposure",
+                  "Diabetes")
+balanced_data[varsToFactor] <- lapply(balanced_data[varsToFactor], factor)
+quantitative_columns <- c("age","Total_energy","BMI",
+                          "VitaminA","VitaminE","Calcium_intake","Magnesium_intake",
+                          "blood_PB","urine_TL","urine_CS","urine_BA","urine_MO","urine_CO","urine_SB","urine_AS")
+balanced_data[quantitative_columns] <- scale(balanced_data[quantitative_columns])
+balanced_data$HL = as.factor(balanced_data$HL)
+library(caret)
+library(rpart)
+library(caTools)
+split <- createDataPartition(balanced_data$HL, p = 0.7, list = FALSE)
+trainData <- balanced_data[split, ]
+testData <- balanced_data[-split, ]
+
+
+
+##GLM
+ctrl <- trainControl(method = "cv", number = 10, classProbs = TRUE)
+trainData$HL <- factor(make.names(trainData$HL))
+
+GLM_model <- train(
+  HL ~ ., 
+  data = trainData,
+  method = "glm",
+  family = "binomial",
+  trControl = ctrl
+)
+GLM_model
+GLM_predictions <- predict(GLM_model, newdata = testData, type = "prob")[,2]
+library(pROC)
+roc_GLM <- roc(testData$HL, GLM_predictions)
+roc_GLM
+# roc 
+windows()
+plot.roc(testData$HL,GLM_predictions,percent=TRUE,col="#1c61b6",print.auc=TRUE,
+         main = "Area under the curve for GLM")
+best_threshold <- coords(roc_GLM, "best", ret = "threshold", best.method = "youden")
+GLM_labels <- ifelse(GLM_predictions > best_threshold, 1, 0)
+GLM_labels = as.factor(GLM_labels)
+confusionMatrix(GLM_labels, testData$HL,positive = "1")
+confusionMatrix(GLM_labels, testData$HL,positive = "1")$byClass
+# pr
+library(PRROC)
+true_labels <- testData$HL
+pr_glm <- pr.curve(scores.class0 = GLM_labels[true_labels == 1],  
+               scores.class1 = GLM_labels[true_labels == 0],  
+               curve = TRUE)
+
+pr_data_glm <- data.frame(
+  Recall = pr_glm$curve[, 1],
+  Precision = pr_glm$curve[, 2]
+)
+windows()
+
+ggplot(pr_data_glm, aes(x = Recall, y = Precision)) +
+  geom_line(color = "blue", size = 1) + 
+  geom_hline(yintercept = pr$auc.integral, linetype = "dashed", color = "red") +  
+  labs(
+    title = "Precision-Recall Curve for GLM",
+    x = "Recall",
+    y = "Precision",
+    caption = paste("AUC =", round(pr$auc.integral, 3))
+  ) +
+  theme_minimal() + 
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 16, face = "bold"),  
+    axis.title = element_text(size = 14), 
+    axis.text = element_text(size = 12)  
+  )
+
+
+
+
+###GBM
+GBM_model <- train(HL ~ ., 
+                  data = trainData,
+                  method = "gbm",
+                  trControl = control)
+
+GBM_model
+GBM_prob = predict(GBM_model, newdata = testData, type = "prob")[,2]
+library(pROC)
+roc_GBM <- roc(testData$HL, GBM_prob)
+roc_GBM
+windows()
+plot.roc(testData$HL, GBM_prob,percent=TRUE,col="#1c61b6",print.auc=TRUE,
+         main = "Area under the curve for GBM")
+best_threshold <- coords(roc_GBM, "best", ret = "threshold", best.method = "youden")
+
+GBM_class<- ifelse(GBM_prob > best_threshold, 1, 0)
+GBM_class = as.factor(GBM_class)
+
+confusionMatrix(GBM_class, testData$HL,positive = "1")
+confusionMatrix(GBM_class, testData$HL,positive = "1")$byClass
+
+
+# pr ----------------------------------------------------------------------
+true_labels <- testData$HL
+library(PRROC)
+pr_gbm <- pr.curve(scores.class0 = GBM_class[true_labels == 1], 
+               scores.class1 = GBM_class[true_labels == 0], 
+               curve = TRUE)
+pr_gbm
+
+pr_data_gbm <- data.frame(
+  Recall = pr_gbm$curve[, 1],
+  Precision = pr_gbm$curve[, 2]
+)
+windows()
+
+ggplot(pr_data_gbm, aes(x = Recall, y = Precision)) +
+  geom_line(color = "blue", size = 1) + 
+  geom_hline(yintercept = pr$auc.integral, linetype = "dashed", color = "red") +  
+  labs(
+    title = "Precision-Recall Curve for GLM",
+    x = "Recall",
+    y = "Precision",
+    caption = paste("AUC =", round(pr$auc.integral, 3))
+  ) +
+  theme_minimal() +  
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 16, face = "bold"), 
+    axis.title = element_text(size = 14),  
+    axis.text = element_text(size = 12)  
+  )
+
+###FNN
+control <- trainControl(method = "cv", number = 10)
+fnn_model <- train(HL ~ ., 
+                    data = trainData,
+                    method = "nnet",
+                    trControl = control)
+fnn_model
+fnn_prob <- predict(fnn_model, newdata = testData, type = "prob")[,2]
+library(pROC)
+roc_fnn <- roc(testData$HL, fnn_prob)
+roc_fnn
+windows()
+plot.roc(testData$HL, fnn_prob,percent=TRUE,col="#1c61b6",print.auc=TRUE,
+         main = "Area under the curve for FNN")
+
+best_threshold <- coords(roc_fnn, "best", ret = "threshold", best.method = "youden")
+
+fnn_labels <- ifelse(fnn_prob > best_threshold, 1, 0)
+fnn_labels = as.factor(fnn_labels)
+confusionMatrix(fnn_labels, testData$HL,positive = "1")
+confusionMatrix(fnn_labels, testData$HL,positive = "1")$byClass
+# pr ----------------------------------------------------------------------
+
+true_labels <- testData$HL
+
+library(PRROC)
+pr_fnn <- pr.curve(scores.class0 = fnn_labels[true_labels == 1],  
+               scores.class1 = fnn_labels[true_labels == 0],  
+               curve = TRUE)
+pr_fnn
+
+pr_data_fnn <- data.frame(
+  Recall = pr_fnn$curve[, 1],
+  Precision = pr_fnn$curve[, 2]
+)
+windows()
+ggplot(pr_data_fnn, aes(x = Recall, y = Precision)) +
+  geom_line(color = "blue", size = 1) + 
+  geom_hline(yintercept = pr$auc.integral, linetype = "dashed", color = "red") + 
+  labs(
+    title = "Precision-Recall Curve for FNN",
+    x = "Recall",
+    y = "Precision",
+    caption = paste("AUC =", round(pr$auc.integral, 3))
+  ) +
+  theme_minimal() + 
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 16, face = "bold"),  
+    axis.title = element_text(size = 14), 
+    axis.text = element_text(size = 12)  
+  )
+
+
+
+
+#########XGboost
+
+library(xgboost)              
+train_matrix <- data.matrix(trainData[, -21])
+train_label <- trainData$HL
+train_data_matrix <- xgb.DMatrix(data = train_matrix, label = train_label)
+test_matrix <- data.matrix(testData[, -21])
+test_label <- testData$HL
+test_data_matrix <- xgb.DMatrix(data = test_matrix, label = test_label)
+
+
+grid<-expand.grid(nrounds=c(75,100,150),
+                  colsample_bytree=1,
+                  min_child_weight=1,
+                  eta=c(0.01,0.1,0.3),
+                  gamma=c(0.5,0.25,0.1),
+                  subsample=0.5,
+                  max_depth=c(2,3,4))
+
+cntrl<-trainControl(method="cv",
+                    number=10,
+                    verboseIter=F,
+                    returnData=F,
+                    returnResamp="final")
+xgb_model<-train(x=train_matrix,
+                 y=as.factor(train_label),
+                 trControl=cntrl,tuneGrid=grid,method="xgbTree")
+xgb_model
+xgb_pred<-predict(xgb_model,test_matrix,type = "prob")[,2]
+library(pROC)
+roc_xgb <- roc(test_label, xgb_pred)
+roc_xgb
+
+
+windows()
+plot.roc(test_label, pred,percent=TRUE,col="#1c61b6",print.auc=TRUE,
+         main = "Area under the curve for XGboost")
+
+best_threshold <- coords(roc_xgb, "best", ret = "threshold", best.method = "youden")
+
+xgb_labels <- ifelse(xgb_pred > best_threshold, 1, 0)
+xgb_labels = as.factor(xgb_labels)
+confusionMatrix(xgb_labels, testData$HL,positive = "1")
+confusionMatrix(xgb_labels, testData$HL,positive = "1")$byClass
+library(PRROC)
+pr_xgb <- pr.curve(scores.class0 = xgb_labels[test_label == "1"],  
+               scores.class1 = xgb_labels[test_label == "0"],  
+               curve = TRUE)
+pr_xgb
+
+pr_data_xgb <- data.frame(
+  Recall = pr_xgb$curve[, 1],
+  Precision = pr_xgb$curve[, 2]
+)
+windows()
+ggplot(pr_data_xgb, aes(x = Recall, y = Precision)) +
+  geom_line(color = "blue", size = 1) +  
+  geom_hline(yintercept = pr$auc.integral, linetype = "dashed", color = "red") +  
+  labs(
+    title = "Precision-Recall Curve for XGboost",
+    x = "Recall",
+    y = "Precision",
+    caption = paste("AUC =", round(pr$auc.integral, 3))
+  ) +
+  theme_minimal() +  
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 16, face = "bold"), 
+    axis.title = element_text(size = 14),  
+    axis.text = element_text(size = 12)  
+  )
+
+
+
+######RF
+balanced_data$HL = as.numeric(balanced_data$HL)-1
+
+balanced_data$HL = ifelse(balanced_data$HL == 0,"no","yes")
+balanced_data$HL = as.factor(balanced_data$HL)
+split <- createDataPartition(balanced_data$HL, p = 0.7, list = FALSE)
+trainData <- balanced_data[split, ]
+testData <- balanced_data[-split, ]
+
+
+trControl <- trainControl(
+  method = "cv", 
+  number = 10,   
+  sampling = NULL  
+)
+rf_model<- train(
+  HL~.,
+  data = trainData,
+  method = "rf",  
+  trControl = trControl 
+)
+
+rf_model
+rf_prob <- predict(rf_model, newdata = testData, type = "prob")[,2]
+library(pROC)
+roc_rf <- roc(testData$HL, rf_prob)
+roc_rf
+windows()
+plot.roc(testData$HL,rf_prob,percent=TRUE,col="#1c61b6",print.auc=TRUE,
+         main = "Area under the curve for RF")
+best_threshold <- coords(roc_rf, "best", ret = "threshold", best.method = "youden")
+
+
+rf_labels <- ifelse(rf_prob > best_threshold, "yes", "no")
+rf_labels = as.factor(rf_labels)
+
+confusionMatrix(rf_labels, testData$HL,positive = "yes")
+confusionMatrix(rf_labels, testData$HL,positive = "yes")$byClass
+
+library(PRROC)
+true_labels <- testData$HL
+pr_rf <- pr.curve(scores.class0 = rf_labels[true_labels == "yes"], 
+               scores.class1 = rf_labels[true_labels == "no"],  
+               curve = TRUE)
+
+pr_data_rf <- data.frame(
+  Recall = pr_rf$curve[, 1],
+  Precision = pr_rf$curve[, 2]
+)
+windows()
+
+ggplot(pr_data_rf, aes(x = Recall, y = Precision)) +
+  geom_line(color = "blue", size = 1) +  
+  geom_hline(yintercept = pr$auc.integral, linetype = "dashed", color = "red") +  
+  labs(
+    title = "Precision-Recall Curve for RF",
+    x = "Recall",
+    y = "Precision",
+    caption = paste("AUC =", round(pr$auc.integral, 3))
+  ) +
+  theme_minimal() +  
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 16, face = "bold"),  
+    axis.title = element_text(size = 14),  
+    axis.text = element_text(size = 12)  
+  )
+
+######DT
+control <- trainControl(method = "cv", number = 10)
+dt_model <- train(HL ~ .,
+                    data = trainData,
+                    method = "rpart",
+                    trControl = control)
+dt_model
+dt_prob <- predict(dt_model, newdata = testData, type = "prob")[,2]
+library(pROC)
+roc_dt <- roc(testData$HL, dt_prob)
+roc_dt
+
+windows()
+plot.roc(testData$HL, dt_prob,percent=TRUE,col="#1c61b6",print.auc=TRUE,
+         main = "Area under the curve for DT")
+
+best_threshold <- coords(roc_dt, "best", ret = "threshold", best.method = "youden")
+
+dt_labels <- ifelse(prob_predictions > best_threshold,"yes", "no")
+dt_labels = as.factor(dt_labels)
+confusionMatrix(dt_labels, testData$HL,positive = "yes")
+confusionMatrix(dt_labels, testData$HL,positive = "yes")$byClass
+true_labels <- testData$HL
+
+library(PRROC)
+pr_dt <- pr.curve(scores.class0 = dt_labels[true_labels == "yes"],  
+               scores.class1 = dt_labels[true_labels == "no"], 
+               curve = TRUE)
+
+pr_data_dt <- data.frame(
+  Recall = pr_dt$curve[, 1],
+  Precision = pr_dt$curve[, 2]
+)
+windows()
+
+ggplot(pr_data_dt, aes(x = Recall, y = Precision)) +
+  geom_line(color = "blue", size = 1) +  
+  geom_hline(yintercept = pr$auc.integral, linetype = "dashed", color = "red") + 
+  labs(
+    title = "Precision-Recall Curve for DT",
+    x = "Recall",
+    y = "Precision",
+    caption = paste("AUC =", round(pr$auc.integral, 3))
+  ) +
+  theme_minimal() +  
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 16, face = "bold"), 
+    axis.title = element_text(size = 14),  
+    axis.text = element_text(size = 12)  
+  )
+
+
+
+##KNN
+control <- trainControl(method = "cv", number = 10)
+knn_model <- train(HL ~ ., # 目标变量和所有其他变量
+                   data = trainData,
+                   method = "knn",
+                   trControl = control)
+knn_model
+knn_prob <- predict(knn_model, newdata = testData, type = "prob")[,2]
+library(pROC)
+roc_knn <- roc(testData$HL, knn_prob)
+roc_knn
+windows()
+plot.roc(testData$HL, knn_prob,percent=TRUE,col="#1c61b6",print.auc=TRUE,
+         main = "Area under the curve for KNN")
+best_threshold <- coords(roc_knn, "best", ret = "threshold", best.method = "youden")
+
+knn_labels <- ifelse(knn_prob > 0.7,"yes", "no")
+knn_labels = as.factor(knn_labels)
+confusionMatrix(knn_labels, testData$HL,positive = "yes")
+confusionMatrix(knn_labels, testData$HL,positive = "yes")$byClass
+true_labels <- testData$HL
+
+library(PRROC)
+pr_knn <- pr.curve(scores.class0 = knn_labels[true_labels == "yes"],  ##阳性
+               scores.class1 = knn_labels[true_labels == "no"],  ##阴性
+               curve = TRUE)
+
+pr_data_knn <- data.frame(
+  Recall = pr_knn$curve[, 1],
+  Precision = pr_knn$curve[, 2]
+)
+windows()
+
+ggplot(pr_data_knn, aes(x = Recall, y = Precision)) +
+  geom_line(color = "blue", size = 1) +  
+  geom_hline(yintercept = pr$auc.integral, linetype = "dashed", color = "red") +  
+  labs(
+    title = "Precision-Recall Curve for KNN",
+    x = "Recall",
+    y = "Precision",
+    caption = paste("AUC =", round(pr$auc.integral, 3))
+  ) +
+  theme_minimal() +  
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 16, face = "bold"),  
+    axis.title = element_text(size = 14), 
+    axis.text = element_text(size = 12)  
+  )
+
+
+##SVM
+
+ctrl <- trainControl(method = "cv", number = 10, classProbs = TRUE, summaryFunction = multiClassSummary)
+
+svm_model <- train(
+  HL~., 
+  data =trainData,
+  method = "svmRadial",               
+  metric = "ROC",  # area under ROC curve (AUC)       
+  trControl = ctrl
+)
+svm_model
+
+
+SVM_predictions <- predict(svm_model, testData, type = "prob")[,2]
+roc_svm<- roc(testData$HL, SVM_predictions)
+roc_svm
+windows()
+plot.roc(testData$HL,SVM_predictions,percent=TRUE,col="#1c61b6",print.auc=TRUE,
+         main = "Area under the curve for SVM")
+
+best_threshold <- coords(roc_svm, "best", ret="threshold", best.method="youden")
+
+svm_labels <- ifelse(SVM_predictions > 0.500269616225476, "yes", "no")
+svm_labels = as.factor(svm_labels)
+
+
+confusionMatrix(svm_labels, testData$HL,positive = "yes")
+confusionMatrix(svm_labels, testData$HL,positive = "yes")$byClass
+
+true_labels <- testData$HL
+library(PRROC)
+pr_svm <- pr.curve(scores.class0 = svm_labels[true_labels == "yes"],  
+               scores.class1 = svm_labels[true_labels == "no"],  
+               curve = TRUE)
+pr_svm
+pr_data_svm <- data.frame(
+  Recall = pr_svm$curve[, 1],
+  Precision = pr_svm$curve[, 2]
+)
+windows()
+
+ggplot(pr_data_svm, aes(x = Recall, y = Precision)) +
+  geom_line(color = "blue", size = 1) +  
+  geom_hline(yintercept = pr$auc.integral, linetype = "dashed", color = "red") + 
+  labs(
+    title = "Precision-Recall Curve for SVM",
+    x = "Recall",
+    y = "Precision",
+    caption = paste("AUC =", round(pr$auc.integral, 3))
+  ) +
+  theme_minimal() +  
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 16, face = "bold"),  
+    axis.title = element_text(size = 14),  
+    axis.text = element_text(size = 12)  
+  )
+
+##Visualization of feature importance
+
+rf_model_final <- rf_model$finalModel
+rf_model_final
+library(randomForest)
+importance <- importance(rf_model_final)
+importance
+write.csv(importance,file = "rf-im.csv")
+importance_df <- as.data.frame(importance)
+importance_df$Feature <- rownames(importance_df)  
+rownames(importance_df) <- NULL  
+
+
+importance_df <- importance_df %>%
+  arrange(desc(MeanDecreaseGini))
+windows()
+
+ggplot(importance_df, aes(x = reorder(Feature, MeanDecreaseGini), y = MeanDecreaseGini)) +
+  geom_bar(stat = "identity", fill = "steelblue", alpha = 0.8) +  
+  coord_flip() +  
+  labs(
+    title = "Random Forest Feature Importance",
+    x = "Feature",
+    y = "Mean Decrease in Gini"
+  ) +
+  theme_minimal() +  
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 16, face = "bold"),  
+    axis.title = element_text(size = 14),  
+    axis.text = element_text(size = 12)  
+  )
+
+
+
+
+
+
+
+
+
+
